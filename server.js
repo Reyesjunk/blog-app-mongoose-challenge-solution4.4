@@ -2,9 +2,12 @@ const bodyParser = require('body-parser');
 const express = require('express');
 const mongoose = require('mongoose');
 const morgan = require('morgan');
+const passport = require('passport');
+const {BasicStrategy} = require('passport-http');
+const AUTH = passport.authenticate('basic', {session: false});
 
 const {DATABASE_URL, PORT} = require('./config');
-const {BlogPost} = require('./models');
+const {BlogPost, User} = require('./models');
 
 const app = express();
 
@@ -12,7 +15,6 @@ app.use(morgan('common'));
 app.use(bodyParser.json());
 
 mongoose.Promise = global.Promise;
-
 
 app.get('/posts', (req, res) => {
   BlogPost
@@ -38,7 +40,102 @@ app.get('/posts/:id', (req, res) => {
     });
 });
 
-app.post('/posts', (req, res) => {
+app.post('/users', (req, res) => {
+  let {username, password, firstName, lastName} = req.body;
+   if (!req.body) {
+  return res.status(400).json({message: 'No request body'});
+  }
+  if (!('username' in req.body)) {
+    return res.status(422).json({message: 'Missing field: username'});
+  }
+  if (typeof username !== 'string') {
+    return res.status(422).json({message: 'Incorrect field type: username'});
+  }
+
+  username = username.trim();
+  if (username === '') {
+    return res.status(422).json({message: 'Incorrect field length: username'});
+  }
+  if (!(password)) {
+    return res.status(422).json({message: 'Missing field: password'});
+  }
+  if (typeof password !== 'string') {
+    return res.status(422).json({message: 'Incorrect field type: password'});
+  }
+  password = password.trim();
+
+  if (password === '') {
+    return res.status(422).json({message: 'Incorrect field length: password'});
+  }
+  const requiredFields = ['username', 'password', 'author'];
+
+  //Check for existing username
+  return User
+    .find({username})
+    .count()
+    .exec()
+    .then(count => {
+      if(count > 0){
+        return res.status(422).json({message: "username already taken"});
+      }
+      return User.hashPassword(password);
+    })
+    .then(hash => {
+      return User
+        .create({
+          username: username.trim(),
+          password: hash,
+          firstName: firstName,
+          lastName: lastName
+        })
+    })
+    .then(user => {
+      return res.status(201).json(user.apiRepr());
+    })
+
+});
+
+app.get('/users', AUTH, (req, res) => {
+  return User
+    .find()
+    .exec()
+    .then(users => res.json(users.map(user => user.apiRepr())))
+    .catch(err => console.log(err) && res.status(500).json({message: 'Internal server error 🐳'}))
+});
+
+const basicStrategy = new BasicStrategy((username, password, callback) => {
+  console.log('basic strategy called');
+  let user;
+  User
+    .findOne({username:username})
+    .exec()
+    .then(_user => {
+      user = _user;
+      if (!user) {
+        return callBack(null, false, {message: 'Incorrect username'});
+      }
+      return user.validatePassword(password);
+    })
+    .then(isValid => {
+      if(!isValid) {
+        return callback(null, false, {message: 'Incorrect password'});
+      }
+      else {
+        return callback(null, user);
+      }
+    })
+    .catch(err => {
+      return callback(err);
+    })
+});
+
+passport.use(basicStrategy);
+app.use(passport.initialize());
+
+
+
+
+app.post('/posts', AUTH, (req, res) => {
   const requiredFields = ['title', 'content', 'author'];
   for (let i=0; i<requiredFields.length; i++) {
     const field = requiredFields[i];
@@ -53,7 +150,7 @@ app.post('/posts', (req, res) => {
     .create({
       title: req.body.title,
       content: req.body.content,
-      author: req.body.author
+      author: {firstName: req.user.firstName, lastName: req.user.lastName}
     })
     .then(blogPost => res.status(201).json(blogPost.apiRepr()))
     .catch(err => {
@@ -64,7 +161,7 @@ app.post('/posts', (req, res) => {
 });
 
 
-app.delete('/posts/:id', (req, res) => {
+app.delete('/posts/:id', AUTH,  (req, res) => {
   BlogPost
     .findByIdAndRemove(req.params.id)
     .exec()
@@ -78,7 +175,7 @@ app.delete('/posts/:id', (req, res) => {
 });
 
 
-app.put('/posts/:id', (req, res) => {
+app.put('/posts/:id', AUTH, (req, res) => {
   if (!(req.params.id && req.body.id && req.params.id === req.body.id)) {
     res.status(400).json({
       error: 'Request path id and request body id values must match'
@@ -102,7 +199,7 @@ app.put('/posts/:id', (req, res) => {
 
 
 app.delete('/:id', (req, res) => {
-  BlogPosts
+  BlogPost
     .findByIdAndRemove(req.params.id)
     .exec()
     .then(() => {
@@ -163,3 +260,5 @@ if (require.main === module) {
 };
 
 module.exports = {runServer, app, closeServer};
+
+

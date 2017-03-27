@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const should = chai.should();
 
 const {DATABASE_URL} = require('../config');
-const {BlogPost} = require('../models');
+const {BlogPost, User} = require('../models');
 const {closeServer, runServer, app} = require('../server');
 const {TEST_DATABASE_URL} = require('../config');
 
@@ -49,7 +49,17 @@ function seedBlogPostData() {
   // this will return a promise
   return BlogPost.insertMany(seedData);
 }
+const theUser = {
+    username: faker.internet.userName(),
+    notHashed: 'Test',
+    password: '$2a$10$PJetmWTuZeTyOP9mpf9nAO/kXZ9QBXyzNPPploowvy3mwLeBErGFi',
+    firstName: faker.name.firstName(),
+    lastName: faker.name.lastName()
+  }
 
+function seedData(){
+  return User.create(theUser);
+}
 
 describe('blog posts API resource', function() {
 
@@ -58,7 +68,7 @@ describe('blog posts API resource', function() {
   });
 
   beforeEach(function() {
-    return seedBlogPostData();
+    return Promise.all([seedBlogPostData(), seedData()]);
   });
 
   afterEach(function() {
@@ -75,7 +85,6 @@ describe('blog posts API resource', function() {
   // this allows us to make clearer, more discrete tests that focus
   // on proving something small
   describe('GET endpoint', function() {
-
     it('should return all existing posts', function() {
       // strategy:
       //    1. get back all posts returned by by GET request to `/posts`
@@ -148,6 +157,7 @@ describe('blog posts API resource', function() {
 
       return chai.request(app)
         .post('/posts')
+        .auth(theUser.username, theUser.notHashed)
         .send(newPost)
         .then(function(res) {
           res.should.have.status(201);
@@ -159,15 +169,15 @@ describe('blog posts API resource', function() {
           // cause Mongo should have created id on insertion
           res.body.id.should.not.be.null;
           res.body.author.should.equal(
-            `${newPost.author.firstName} ${newPost.author.lastName}`);
+            `${theUser.firstName} ${theUser.lastName}`);
           res.body.content.should.equal(newPost.content);
           return BlogPost.findById(res.body.id).exec();
         })
         .then(function(post) {
           post.title.should.equal(newPost.title);
           post.content.should.equal(newPost.content);
-          post.author.firstName.should.equal(newPost.author.firstName);
-          post.author.lastName.should.equal(newPost.author.lastName);
+          post.author.firstName.should.equal(theUser.firstName);
+          post.author.lastName.should.equal(theUser.lastName);
         });
     });
   });
@@ -197,6 +207,7 @@ describe('blog posts API resource', function() {
 
           return chai.request(app)
             .put(`/posts/${post.id}`)
+            .auth(theUser.username, theUser.notHashed)
             .send(updateData);
         })
         .then(res => {
@@ -234,7 +245,8 @@ describe('blog posts API resource', function() {
         .exec()
         .then(_post => {
           post = _post;
-          return chai.request(app).delete(`/posts/${post.id}`);
+          return chai.request(app).delete(`/posts/${post.id}`)
+          .auth(theUser.username, theUser.notHashed)
         })
         .then(res => {
           res.should.have.status(204);
